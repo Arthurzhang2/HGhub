@@ -1,0 +1,66 @@
+name: Build Unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Install Frontend Dependencies
+        run: pnpm install
+
+      - name: Init iOS Project
+        run: pnpm tauri ios init --ci
+
+      - name: Build Unsigned App
+        run: |
+          # 先跑一次 tauri ios build 编译前端和 Rust 静态库（忽略最后一步无证书导出的报错）
+          pnpm tauri ios build --export-method debugging || true
+          
+          # 使用 xcodebuild 强制跳过苹果签名，直接生成 .app 包
+          cd src-tauri/gen/apple
+          xcodebuild -project *.xcodeproj \
+            -scheme "*_iOS" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: Package into Unsigned IPA
+        run: |
+          cd src-tauri/gen/apple/build/DerivedData/Build/Products/Release-iphoneos
+          mkdir -p Payload
+          cp -r *.app Payload/
+          zip -r HGhub-unsigned.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HGhub-Unsigned-IPA
+          path: src-tauri/gen/apple/build/DerivedData/Build/Products/Release-iphoneos/HGhub-unsigned.ipa
